@@ -6,9 +6,8 @@ st.title("MN MFSAB Compliance Checker")
 
 # Upload files
 order_file = st.file_uploader("Upload Order Spreadsheet", type=["xlsx"])
-spec_file = st.file_uploader("Upload Pattern Spec CSV", type=["csv"])
+state_spec_file = st.file_uploader("Upload State Spec Spreadsheet", type=["xlsx"])
 
-# Convert wildcard pattern to regex
 def wildcard_to_regex(pattern):
     pattern = pattern.replace(".", r"\.")
     pattern = pattern.replace("XXX", r"\d{3}")
@@ -18,7 +17,6 @@ def wildcard_to_regex(pattern):
     pattern = pattern.replace(" ", "")
     return f"^{pattern}$"
 
-# Check if any code matches the pattern
 def check_match(pattern, codes):
     try:
         regex = re.compile(wildcard_to_regex(str(pattern)))
@@ -26,28 +24,45 @@ def check_match(pattern, codes):
     except re.error:
         return False
 
-if order_file and spec_file:
-    # Load order sheet and spec file
+if order_file and state_spec_file:
     order_df = pd.read_excel(order_file, sheet_name="Mapics")
-    spec_df = pd.read_csv(spec_file)
+    state_spec_df = pd.read_excel(state_spec_file, sheet_name="MN", skiprows=9)
 
-    # Extract ordered codes
+    # Clean up and rename columns
+    state_spec_df.columns = [
+        "Feature", "Source", "Option_Type_AI", "Option_Type_AII", "Option_MFSAB",
+        "Option_Type_WC", "Revised_Date", "Revised_By", "Revision", "Unused1", "Unused2"
+    ]
+
+    # Filter MFSAB-required options
+    mfsab_df = state_spec_df[
+        state_spec_df["Option_MFSAB"].notna() & state_spec_df["Option_Type_AII"].notna()
+    ]
+
+    # Get clean lists
+    required_patterns = mfsab_df["Option_Type_AII"].astype(str).str.strip()
     ordered_codes = order_df["Item Numbers"].dropna().astype(str).str.strip().tolist()
 
-    # Apply pattern matching
-    spec_df["Match Status"] = spec_df["Pattern"].apply(
-        lambda pat: "✅ Matched" if check_match(pat, ordered_codes) else "❌ Missing"
-    )
+    # Match logic
+    results = []
+    for i, row in mfsab_df.iterrows():
+        pattern = row["Option_Type_AII"]
+        matched = check_match(pattern, ordered_codes)
+        results.append({
+            "Pattern": pattern,
+            "Match Status": "✅ Matched" if matched else "❌ Missing",
+            "Feature": row["Feature"],
+            "Description": str(row["Source"])
+        })
+
+    result_df = pd.DataFrame(results)
 
     st.success("Compliance check complete.")
+    st.dataframe(result_df)
 
-    # Show full results
-    st.dataframe(spec_df)
-
-    # Option to download updated file
     st.download_button(
         label="Download Updated Compliance Summary",
-        data=spec_df.to_csv(index=False).encode("utf-8"),
+        data=result_df.to_csv(index=False).encode("utf-8"),
         file_name="Updated_MN_MFSAB_Compliance_Summary.csv",
         mime="text/csv"
     )
